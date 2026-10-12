@@ -1,0 +1,125 @@
+"""Stage 1 diagnostics: plain-text evidence for choosing cleaning thresholds. Describes only.
+
+Run from the project root:  python -m src.diagnostics
+Writes reports/stage1_diagnostics.txt and echoes it to stdout.
+"""
+
+import contextlib
+import io
+from pathlib import Path
+
+import pandas as pd
+
+from src.clean import (DST_WINDOWS_2025, apply_rules, build_ambulance_dataset,
+                       overlaps_window, travel_time_seconds)
+from src.load import DEFAULT_RAW_PATH, load_raw
+
+REPORT_PATH = Path(__file__).resolve().parents[1] / "reports" / "stage1_diagnostics.txt"
+
+SPRING_FORWARD, FALL_BACK = DST_WINDOWS_2025
+
+SHORT_BINS = [0, 10, 20, 30, 60, 90, 120]
+SHORT_LABELS = ["1-10", "11-20", "21-30", "31-60", "61-90", "91-120"]
+LONG_THRESHOLDS_MIN = [20, 30, 45, 60, 90, 120]
+
+TIME_COLS = ["received_dttm", "response_dttm", "on_scene_dttm"]
+
+
+def section(title):
+    print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
+
+
+def median_p90(df, by):
+    g = df.groupby(by)["travel_time_s"]
+    return pd.DataFrame({"n": g.size(), "median_s": g.median(), "p90_s": g.quantile(0.9)}).round(1)
+
+
+def priority_group(cat: pd.Series) -> pd.Series:
+    return cat.where(cat.isin(["3", "2"]), "other")
+
+
+def report(raw):
+    raw = raw.copy()
+    raw["travel_time_s"] = travel_time_seconds(raw)
+    raw["overlaps_spring_fwd"] = overlaps_window(raw, *SPRING_FORWARD)
+    raw["overlaps_fall_back"] = overlaps_window(raw, *FALL_BACK)
+
+    section("1. RAW rows with travel_time_s < 0 (all unit types)")
+    neg = raw[raw["travel_time_s"] < 0].sort_values("received_dttm")
+    print(f"count: {len(neg)}")
+    print(f"fall-back window used: {FALL_BACK[0]} to {FALL_BACK[1]}")
+    print(neg[TIME_COLS + ["unit_type", "travel_time_s", "overlaps_fall_back"]].to_string())
+
+    section("2. RAW rows overlapping the spring-forward window (all unit types)")
+    print(f"window: {SPRING_FORWARD[0]} to {SPRING_FORWARD[1]}")
+    sf = raw[raw["overlaps_spring_fwd"]].sort_values("received_dttm")
+    print(f"count: {len(sf)}")
+    print(sf["unit_type"].value_counts().to_string())
+    print()
+    print(sf[TIME_COLS + ["unit_type", "travel_time_s"]].to_string())
+    print("\nfor reference, RAW median travel_time_s by unit_type (all rows):")
+    print(raw.groupby("unit_type")["travel_time_s"].median().to_string())
+
+    amb, exclusions = build_ambulance_dataset(raw.drop(columns=["travel_time_s"]))
+    amb["priority_group"] = priority_group(amb["original_priority_cat"])
+
+    section(f"3. AMBULANCES (MEDIC+PRIVATE) after R1-R5: {len(amb):,} rows")
+
+    section("3a. Short travel times: counts per bin (seconds), by unit_type")
+    bins = pd.cut(amb["travel_time_s"], SHORT_BINS, labels=SHORT_LABELS)
+    print(pd.crosstab(bins, amb["unit_type"], margins=True).to_string())
+
+    section("3b. Long travel times: counts with travel_time_s > threshold")
+    above = pd.DataFrame({f"> {m} min": amb["travel_time_s"] > m * 60 for m in LONG_THRESHOLDS_MIN})
+    for label, key in [("by unit_type", "unit_type"),
+                       ("by original_priority_cat group (3 / 2 / other)", "priority_group")]:
+        print(f"\n{label}:")
+        table = above.groupby(amb[key]).sum().T
+        table["ALL"] = table.sum(axis=1)
+        print(table.to_string())
+        print("group n:", amb[key].value_counts().to_dict())
+
+    section("3c. Median and p90 travel_time_s")
+    hour = amb["received_dttm"].dt.hour.rename("hour_received")
+    month = amb["received_dttm"].dt.month.rename("month_received")
+    for label, by in [("by original_priority_cat", "original_priority_cat"),
+                      ("by hour of received_dttm", hour),
+                      ("by month of received_dttm", month),
+                      ("by unit_type", "unit_type")]:
+        print(f"\n{label}:")
+        print(median_p90(amb, by).to_string())
+
+    section("3d. Crosstab unit_type x als_unit")
+    print(pd.crosstab(amb["unit_type"], amb["als_unit"], margins=True).to_string())
+
+    section("3e. Rows per call_number (ambulance rows only) and unit_sequence_in_call_dispatch")
+    rows_per_call = amb.groupby("call_number").size()
+    print(f"unique call_number: {rows_per_call.size:,}")
+    print("\nrows per call -> number of calls:")
+    print(rows_per_call.value_counts().sort_index().to_string())
+    print("\nunit_sequence_in_call_dispatch -> rows:")
+    print(amb["unit_sequence_in_call_dispatch"].value_counts().sort_index().to_string())
+
+    section("3f. Exclusion table: build_ambulance_dataset(min_tt_s=None, max_tt_s=None)")
+    print(exclusions.to_string(index=False))
+
+    section("4. For comparison only: ENGINE after R2-R5")
+    engine, _ = apply_rules(raw.drop(columns=["travel_time_s"]), {"ENGINE"})
+    print(median_p90(engine, "unit_type").to_string())
+
+
+def main():
+    pd.set_option("display.width", 220)
+    pd.set_option("display.max_rows", 1000)
+    pd.set_option("display.max_columns", 50)
+    raw = load_raw(DEFAULT_RAW_PATH)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        report(raw)
+    REPORT_PATH.write_text(buf.getvalue())
+    print(buf.getvalue())
+
+
+if __name__ == "__main__":
+    main()
