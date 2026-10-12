@@ -1,5 +1,7 @@
 # San Francisco ambulance travel time at dispatch
 
+**Summary.** On 100,461 San Francisco ambulance responses from 2025, a LightGBM model predicts travel time at dispatch with test MAE 214.7 s. The best simple baseline (median by station area × priority) gets 230.6 s, so the gain is a modest ~7%, but it is consistent across priority groups, unit types and 10 held-out spatial regions. Conformalized 80% intervals reach 79.5% test coverage and are ~6% narrower than the baseline's, but are still about 11 minutes wide. The main limitation is that the ambulance's starting location is unknown.
+
 ## 1. Question
 
 Can ambulance travel time (en route → on scene) be predicted at the moment a unit is dispatched? This is a small open-data analogue of ambulance driving-time research, built on San Francisco Fire Department dispatch records.
@@ -48,13 +50,13 @@ The rules are applied in order ([`src/clean.py`](src/clean.py)):
 | R4 | drop dispatch < received or response < dispatch | 16 | 100,718 | Out-of-order timestamps. |
 | R5 | drop [received, on_scene] overlapping a 2025 DST transition | 35 | 100,683 | See DST evidence below. |
 | R6 | drop travel time ≤ 10 s | 197 | 100,486 | See the 1–10 s spike below. |
-| R7 | drop travel time > 3,600 s | 25 | 100,461 | Over an hour is not a credible drive within the city. Applied identically to every split. |
+| R7 | drop travel time > 3,600 s | 25 | 100,461 | Over an hour is not a credible drive within the city. Only 25 rows; on test, dropping vs keeping them changes RMSE by about 5 s for every model and does not change the ranking (stage 3 sensitivity). |
 
 Evidence behind R3, R5 and R6:
 - **R3:** 5,182 of the 5,200 non-positive travel times in the raw file are exactly 0.
 - **R5 (DST):**
   - 7 of the 18 negative travel times in the raw file fall in the 2025-11-02 fall-back window, between −2,279 s and −3,362 s, close to the one-hour shift.
-  - Two rows in the spring-forward window show 7,958 s and 4,172 s.
+  - Two rows in the spring-forward window show 7,958 s and 4,172 s. The clock skipped 02:00–03:00, so elapsed time computed across it is inflated by one hour (e.g. 4,172 − 3,600 = 572 s of real travel).
 - **R6:** after R1–R5, the 1–10 s bin holds 197 rows, against 87 and 90 in the 11–20 s and 21–30 s bins. This is the same artefact as exact zeros: en route and on scene pressed almost together.
 
 A hypothesis that timestamps are rounded to the minute by hand was rejected. `on_scene_dttm` has seconds = 0 in 1.60–2.07% of rows by unit type, close to the 1.67% expected without rounding.
@@ -71,6 +73,7 @@ A hypothesis that timestamps are rounded to the minute by hand was rejected. `on
   - `als_unit`, `unit_sequence_in_call_dispatch`
   - hour and day of week of `received_dttm`
   - `workload_60m`: distinct calls in the raw file received in the 60 minutes **strictly before** this call. A call at the same timestamp, or the call itself, is not counted; this is asserted on a hand-made example.
+- **Tuning.** Hyperparameters were chosen on the validation month from a 6-config grid (all within 0.4 s of each other in validation MAE). The final model was refit on train+valid.
 - **Intervals (80%).** Two LightGBM quantile models (α = 0.1, 0.9) are fit on the training months, then conformalized (CQR) on the validation month: `[lo − q, hi + q]`.
 
 ## 6. Validation design
@@ -84,7 +87,7 @@ A hypothesis that timestamps are rounded to the minute by hand was rejected. `on
   | test | Oct–Dec | 25,252 | 25,027 |
 
 - **Grouped by `call_number`.** Units on the same call never straddle splits or folds.
-- **Paired bootstrap on test, resampling calendar days** (92 days). Calls on the same day share conditions, so days are treated as the independent unit.
+- **Paired bootstrap on test, resampling calendar days** (92 days). Calls on the same day share conditions, so days are treated as the independent unit. The CI reflects sampling variation over test days for fixed fitted models, not variation from refitting.
 - **Spatial block CV on train+valid.** KMeans on coordinates gives 10 contiguous blocks, and each fold holds out one block.
 
 ## 7. Results
@@ -150,17 +153,21 @@ A hypothesis that timestamps are rounded to the minute by hand was rejected. `on
   - in every priority group (288.2 vs 301.0, 141.7 vs 157.9, 248.4 vs 269.3);
   - for both unit types (MEDIC 213.6 vs 230.6, PRIVATE 218.1 vs 230.8);
   - in all 10 held-out spatial blocks (gains of 3.6 to 27.6 s).
+- **Engines are much faster and less variable than ambulances.** Engines (after R2–R5) have a median of 174 s and a 90th percentile of 328 s, against 473 s and 1,091 s for MEDIC (after R1–R5). Engines usually start from a nearby station, while an ambulance's starting point varies. This is why ambulance travel time is the harder problem.
 - **Priority dominates; incident location adds little.**
   - Permutation importance on test: shuffling `original_priority_cat` raises MAE by 77.2 s. Shuffling `lat` or `lon` raises it by 3.5 s and 2.7 s, and `station_area` by 11.1 s.
   - This is consistent with the ambulance's starting point being unknown: the incident location alone does not fix the distance driven.
-- **Dispatch order is informative and interacts with priority.** Shuffling `unit_sequence_in_call_dispatch` raises MAE by 23.8 s.
-  - Priority 3 (Code 3): the first unit dispatched has a median travel time of 242 s, the second unit 388 s.
-  - Priority 2: the order reverses, with 710 s for the first unit and 533 s for the second.
-  - A possible mechanism, which is a hypothesis not tested here: on Code 3 calls the nearest unit goes first and later units come from farther away, while on Code 2 calls a second dispatch may replace a distant first unit with a closer one.
-- **Calibrated 80% intervals are narrower than the baseline's but still wide.**
+- **Dispatch order is informative and interacts with priority.**
+  - `unit_sequence_in_call_dispatch` is the ambulance's position among all units assigned to the call; the first unit is often an engine. Shuffling it raises MAE by 23.8 s.
+  - On priority 3 calls, an ambulance assigned first has a median travel time of 242 s, and one assigned second 388 s. On priority 2 calls the pattern reverses (710 s vs 533 s).
+  - For priority 3 this is consistent with an engine being sent first when no ambulance is close, but that mechanism is not tested here. The priority 2 pattern is unexplained.
+  - The variable reflects dispatch decisions, not geography alone.
+- **`workload_60m` contributes little:** validation MAE is 216.1 s with it vs 216.9 s without, and its test permutation importance is 3.6 s.
+- **80% intervals have near-nominal coverage and are narrower than the baseline's, but still wide.**
   - The CQR intervals are 641.7 s wide on average, against 683.8 s for B2 (about 6% narrower; about 11% for priority 3: 398.2 vs 448.8 s).
   - 641.7 s is still about 11 minutes, more than the median ambulance trip (473 s MEDIC, 423 s PRIVATE). Uncertainty is large relative to a typical trip.
-- **For PRIVATE units the model does not improve the 90th-percentile error:** P90AE is 502.3 s against 484.0 s for B2.
+  - Misses are lopsided: actual trips exceed the upper bound 11.5% of the time (nominal 10%) and fall below the lower bound 9.0%. This holds in every priority group. So the intervals slightly understate the risk of long trips, which is the side that matters for dispatch.
+- **For PRIVATE units the model does not improve the 90th-percentile error:** P90AE is 502.3 s against 484.0 s for B2, and RMSE barely changes (352.6 vs 354.7 s).
 
 ## 9. Limitations
 
