@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
-PROCESSED_PATH = Path(__file__).resolve().parents[1] / "data" / "processed" / "ambulance_clean.parquet"
+ROOT = Path(__file__).resolve().parents[1]
+PROCESSED_PATH = ROOT / "data" / "processed" / "ambulance_clean.parquet"
 
 # Final thresholds chosen in Stage 1 (evidence: reports/stage1_diagnostics.txt).
 MIN_TT_S = 11
@@ -107,7 +108,8 @@ def build_ambulance_dataset(raw_df, min_tt_s=MIN_TT_S, max_tt_s=MAX_TT_S):
 def save_processed(df, path=PROCESSED_PATH):
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(path, index=False)
-    return path
+    # Relative path so printed output (and committed notebooks) carry no machine-specific paths.
+    return path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
 
 
 def load_processed(path=PROCESSED_PATH) -> pd.DataFrame:

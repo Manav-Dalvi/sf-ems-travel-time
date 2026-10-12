@@ -61,6 +61,10 @@ def run():
     t["hour_band"] = hour_band(t["received_dttm"])
     # Blocks come from the KMeans fitted on train+valid locations in model.run().
     t["spatial_block"] = assign_spatial_blocks(r["block_km"], t)
+    # One-sided misses: an 80% interval should leave ~10% above and ~10% below.
+    t["above_upper"], t["below_lower"] = t[TARGET] > cqr_hi, t[TARGET] < cqr_lo
+    r["exceedance"] = pd.concat([exceedance_table(t.assign(ALL="ALL"), "ALL"),
+                                 exceedance_table(t, "priority_group")])
     r["errors_by"] = {seg: error_table(t, seg)
                       for seg in ["priority_group", "unit_type", "hour_band", "spatial_block"]}
 
@@ -79,6 +83,12 @@ def run():
     r["tail"] = pd.DataFrame(rows).set_index("model").round(1)
     r["test_frame"] = t
     return r
+
+
+def exceedance_table(t, seg):
+    g = t.groupby(seg)
+    return pd.DataFrame({"n": g.size(), "actual_above_upper_%": 100 * g["above_upper"].mean(),
+                         "actual_below_lower_%": 100 * g["below_lower"].mean()}).round(1)
 
 
 def error_table(t, seg):
@@ -126,8 +136,12 @@ def report(r):
     print(r["station_best"].to_string())
     print("highest MAE (worst 5):")
     print(r["station_worst"].to_string())
+    print("\nCQR interval exceedance on TEST (target ~10% each side):")
+    print(r["exceedance"].to_string())
     print(f"\ntail: rows with actual > test 90th percentile ({r['tail_threshold']:.0f} s); "
           "signed error = actual - predicted (positive = under-predicts)")
+    print("CAVEAT: conditioning on actual > p90 selects on the outcome; any median predictor "
+          "under-predicts all such rows.\nNot evidence of model failure; see upper-bound exceedance instead.")
     print(r["tail"].to_string())
 
 

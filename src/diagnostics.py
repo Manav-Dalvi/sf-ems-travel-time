@@ -106,6 +106,13 @@ def report(raw):
     engine, _ = apply_rules(raw.drop(columns=["travel_time_s"]), {"ENGINE"})
     print(median_p90(engine, "unit_type").to_string())
 
+    section("5. Noise floor: share of timestamps with seconds == 0 (R1-R5 rows, all three unit types)")
+    print("expected ~1/60 = 1.67% if timestamps are not rounded to the minute")
+    share, median_tt = noise_floor(raw.drop(columns=["travel_time_s"]))
+    print(share.to_string())
+    print("\nmedian travel_time_s by on_scene seconds == 0:")
+    print(median_tt.to_string())
+
 
 def noise_floor(raw):
     """Do timestamps look minute-rounded? With true second resolution, seconds == 0

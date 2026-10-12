@@ -220,3 +220,23 @@ rule                                             description  rows_before  rows_
                n  median_s  p90_s
 unit_type                        
 ENGINE     52538     174.0  328.0
+
+==============================================================================
+5. Noise floor: share of timestamps with seconds == 0 (R1-R5 rows, all three unit types)
+==============================================================================
+expected ~1/60 = 1.67% if timestamps are not rounded to the minute
+               n  on_scene_sec0_pct  response_sec0_pct
+unit_type                                             
+ENGINE     52538               1.60               1.70
+MEDIC      76388               1.78               1.64
+PRIVATE    24295               2.07               1.76
+
+median travel_time_s by on_scene seconds == 0:
+                             n  median_tt_s
+unit_type on_scene_sec0                    
+ENGINE    False          51696        174.0
+          True             842        176.0
+MEDIC     False          75030        473.0
+          True            1358        487.5
+PRIVATE   False          23791        423.0
+          True             504        451.5
