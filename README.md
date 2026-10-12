@@ -158,7 +158,7 @@ A hypothesis that timestamps are rounded to the minute by hand was rejected. `on
   - Permutation importance on test: shuffling `original_priority_cat` raises MAE by 77.2 s. Shuffling `lat` or `lon` raises it by 3.5 s and 2.7 s, and `station_area` by 11.1 s.
   - This is consistent with the ambulance's starting point being unknown: the incident location alone does not fix the distance driven.
 - **Dispatch order is informative and interacts with priority.**
-  - `unit_sequence_in_call_dispatch` is the ambulance's position among all units assigned to the call; the first unit is often an engine. Shuffling it raises MAE by 23.8 s.
+  - `unit_sequence_in_call_dispatch` is the ambulance's position among all units assigned to the call; for most ambulances ranked second, the unit assigned first was not an ambulance in our data. Shuffling it raises MAE by 23.8 s.
   - On priority 3 calls, an ambulance assigned first has a median travel time of 242 s, and one assigned second 388 s. On priority 2 calls the pattern reverses (710 s vs 533 s).
   - For priority 3 this is consistent with an engine being sent first when no ambulance is close, but that mechanism is not tested here. The priority 2 pattern is unexplained.
   - The variable reflects dispatch decisions, not geography alone.
