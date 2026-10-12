@@ -10,8 +10,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.clean import (DST_WINDOWS_2025, apply_rules, build_ambulance_dataset,
-                       overlaps_window, travel_time_seconds)
+from src.clean import (AMBULANCE_UNIT_TYPES, DST_WINDOWS_2025, apply_rules,
+                       build_ambulance_dataset, overlaps_window, priority_group,
+                       travel_time_seconds)
 from src.load import DEFAULT_RAW_PATH, load_raw
 
 REPORT_PATH = Path(__file__).resolve().parents[1] / "reports" / "stage1_diagnostics.txt"
@@ -32,10 +33,6 @@ def section(title):
 def median_p90(df, by):
     g = df.groupby(by)["travel_time_s"]
     return pd.DataFrame({"n": g.size(), "median_s": g.median(), "p90_s": g.quantile(0.9)}).round(1)
-
-
-def priority_group(cat: pd.Series) -> pd.Series:
-    return cat.where(cat.isin(["3", "2"]), "other")
 
 
 def report(raw):
@@ -60,7 +57,9 @@ def report(raw):
     print("\nfor reference, RAW median travel_time_s by unit_type (all rows):")
     print(raw.groupby("unit_type")["travel_time_s"].median().to_string())
 
-    amb, exclusions = build_ambulance_dataset(raw.drop(columns=["travel_time_s"]))
+    # Stage 1 evidence was gathered before R6/R7 existed, so keep them off here.
+    amb, exclusions = build_ambulance_dataset(raw.drop(columns=["travel_time_s"]),
+                                              min_tt_s=None, max_tt_s=None)
     amb["priority_group"] = priority_group(amb["original_priority_cat"])
 
     section(f"3. AMBULANCES (MEDIC+PRIVATE) after R1-R5: {len(amb):,} rows")
@@ -106,6 +105,23 @@ def report(raw):
     section("4. For comparison only: ENGINE after R2-R5")
     engine, _ = apply_rules(raw.drop(columns=["travel_time_s"]), {"ENGINE"})
     print(median_p90(engine, "unit_type").to_string())
+
+
+def noise_floor(raw):
+    """Do timestamps look minute-rounded? With true second resolution, seconds == 0
+    should occur ~1/60 = 1.7% of the time. Uses R1-R5 rows of all three unit types
+    (no R6/R7, since this check is evidence for them)."""
+    df, _ = apply_rules(raw, AMBULANCE_UNIT_TYPES | {"ENGINE"})
+    on0 = df["on_scene_dttm"].dt.second.eq(0)
+    resp0 = df["response_dttm"].dt.second.eq(0)
+    share = pd.DataFrame({
+        "n": df.groupby("unit_type").size(),
+        "on_scene_sec0_pct": (on0.groupby(df["unit_type"]).mean() * 100).round(2),
+        "response_sec0_pct": (resp0.groupby(df["unit_type"]).mean() * 100).round(2),
+    })
+    median_tt = (df.groupby(["unit_type", on0.rename("on_scene_sec0")])["travel_time_s"]
+                 .agg(["size", "median"]).rename(columns={"size": "n", "median": "median_tt_s"}))
+    return share, median_tt
 
 
 def main():

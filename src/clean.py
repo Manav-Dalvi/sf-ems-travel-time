@@ -4,7 +4,15 @@ Rules are applied in a fixed order and every removal is counted, so the exclusio
 table can be reported alongside any result.
 """
 
+from pathlib import Path
+
 import pandas as pd
+
+PROCESSED_PATH = Path(__file__).resolve().parents[1] / "data" / "processed" / "ambulance_clean.parquet"
+
+# Final thresholds chosen in Stage 1 (evidence: reports/stage1_diagnostics.txt).
+MIN_TT_S = 11
+MAX_TT_S = 3600
 
 AMBULANCE_UNIT_TYPES = {"MEDIC", "PRIVATE"}
 
@@ -56,10 +64,13 @@ def apply_rules(raw_df, unit_types, min_tt_s=None, max_tt_s=None):
         ("R5", "drop [received, on_scene] overlapping a 2025 DST window",
          lambda d: ~overlaps_any_dst_window(d)),
     ]
-    # R6/R7: plausibility bounds; thresholds not yet chosen, so off by default.
+    # R6: 1-10 s bin is a spike above the smooth 11-60 s curve (197 vs 87/90 rows
+    # per 10 s); same artefact as exact zeros (en-route and on-scene pressed almost together).
     if min_tt_s is not None:
         rules.append(("R6", f"drop travel_time_s < {min_tt_s}",
                       lambda d: d["travel_time_s"] >= min_tt_s))
+    # R7: SF is ~11 km across; >60 min is not credible driving inside the city
+    # even at 15 km/h. 25 rows. Applied to train and test identically.
     if max_tt_s is not None:
         rules.append(("R7", f"drop travel_time_s > {max_tt_s}",
                       lambda d: d["travel_time_s"] <= max_tt_s))
@@ -84,5 +95,28 @@ def apply_rules(raw_df, unit_types, min_tt_s=None, max_tt_s=None):
     return df.reset_index(drop=True), pd.DataFrame(records)
 
 
-def build_ambulance_dataset(raw_df, min_tt_s=None, max_tt_s=None):
+def priority_group(original_priority_cat: pd.Series) -> pd.Series:
+    """Collapse to the two large codes (3, 2) and 'other'; letter codes' meaning is unconfirmed."""
+    return original_priority_cat.where(original_priority_cat.isin(["3", "2"]), "other")
+
+
+def build_ambulance_dataset(raw_df, min_tt_s=MIN_TT_S, max_tt_s=MAX_TT_S):
     return apply_rules(raw_df, AMBULANCE_UNIT_TYPES, min_tt_s, max_tt_s)
+
+
+def save_processed(df, path=PROCESSED_PATH):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, index=False)
+    return path
+
+
+def load_processed(path=PROCESSED_PATH) -> pd.DataFrame:
+    return pd.read_parquet(path)
+
+
+if __name__ == "__main__":
+    from src.load import load_raw
+
+    clean, exclusions = build_ambulance_dataset(load_raw())
+    print(exclusions.to_string(index=False))
+    print(f"saved {len(clean):,} rows -> {save_processed(clean)}")
