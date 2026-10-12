@@ -19,7 +19,7 @@ from src.clean import build_ambulance_dataset, load_processed
 from src.diagnostics import section
 from src.features import FEATURES, add_features, check_workload_60m, make_X
 from src.load import load_raw
-from src.splits import assign_time_split, spatial_folds, split_counts
+from src.splits import assign_time_split, spatial_block_folds, spatial_folds, split_counts
 
 REPORT_PATH = Path(__file__).resolve().parents[1] / "reports" / "stage3_results.txt"
 TARGET = "travel_time_s"
@@ -32,6 +32,7 @@ BASE_PARAMS = dict(objective="l1", learning_rate=0.05, random_state=0,
                    deterministic=True, force_row_wise=True, verbose=-1)
 GRID = [{"num_leaves": nl, "min_child_samples": mcs} for nl in (15, 31, 63) for mcs in (20, 100)]
 FEATURES_NO_WORKLOAD = [f for f in FEATURES if f != "workload_60m"]
+DIFF_LABELS = ["MAE(B2) - MAE(model)", "RMSE(B2) - RMSE(model)"]
 
 
 def fit(train, params, n_iter, features=FEATURES, eval_df=None):
@@ -75,15 +76,14 @@ def tune(train, valid):
     return grid, params, int(chosen["best_iter"])
 
 
-def spatial_cv(trval, params, n_iter):
-    # Caveat, checked in this data: station_area is NOT nested in battalion (most station
-    # areas occur under >1 battalion; ~24% of rows sit outside their station area's modal
-    # battalion; see battalion_nesting). So a held-out battalion's station_area levels and
-    # locations are mostly SEEN in training; only its battalion level is unseen (-> NaN).
-    # This is a "new battalion label" test, not a clean unseen-area test.
-    # B2_cell_share_% shows how often B2 still found its station x priority cell.
-    # n_iter is the one chosen on valid, kept fixed.
-    folds = spatial_folds(trval, verbose=False)
+def spatial_cv(trval, params, n_iter, folds, labels):
+    """Fit model and B2 on all folds but one, score MAE on the held-out fold.
+
+    `labels` names what each row's held-out group is (spatial block or battalion).
+    n_iter is the one chosen on valid, kept fixed. B2_cell_share_% shows how often B2
+    still found its station x priority cell in the held-out fold.
+    """
+    labels = np.asarray(labels)
     rows = []
     for k in np.unique(folds):
         tr, ho = trval[folds != k], trval[folds == k]
@@ -91,7 +91,7 @@ def spatial_cv(trval, params, n_iter):
         b2_pred, b2_used = CellQuantile(BASELINES[B2_NAME]).fit(tr).predict(ho)
         mae_model = metrics.report(ho[TARGET], predict(model, cats, ho))["MAE"]
         mae_b2 = metrics.report(ho[TARGET], b2_pred)["MAE"]
-        rows.append({"held_out": ", ".join(sorted(ho["battalion"].unique())), "rows": len(ho),
+        rows.append({"held_out": ", ".join(map(str, sorted(set(labels[folds == k])))), "rows": len(ho),
                      f"MAE_{MODEL_NAME}": mae_model, "MAE_B2": mae_b2, "B2_minus_model": mae_b2 - mae_model,
                      "B2_cell_share_%": 100 * (b2_used == "B2").mean()})
     table = pd.DataFrame(rows).round(1)
@@ -133,9 +133,14 @@ def run():
     preds, r["test_fallbacks"] = baselines.fit_predict(trval, test)
     preds[MODEL_NAME] = predict(model, cats, test)
     r["test_preds"] = preds
-    r["bootstrap"] = metrics.paired_cluster_bootstrap(
-        test[TARGET], preds[B2_NAME], preds[MODEL_NAME], test["call_number"], n_boot=1000, seed=0)
-    r["bootstrap"].index = ["MAE(B2) - MAE(model)", "RMSE(B2) - RMSE(model)"]
+    # Headline bootstrap resamples calendar days: calls on the same day share weather,
+    # traffic and load, so days (not calls) are the more honest independent unit.
+    # The call-level version is kept alongside for comparison.
+    r["bootstrap_day"], r["bootstrap"] = (
+        metrics.paired_cluster_bootstrap(test[TARGET], preds[B2_NAME], preds[MODEL_NAME], groups,
+                                         n_boot=1000, seed=0).set_axis(DIFF_LABELS)
+        for groups in (test["received_dttm"].dt.date, test["call_number"]))
+    r["n_test_days"] = test["received_dttm"].dt.date.nunique()
 
     # Sensitivity: same fitted models, test rebuilt without R7 (no upper travel-time cap).
     no_r7 = load_modelling_frame(raw, build_ambulance_dataset(raw, max_tt_s=None)[0])
@@ -151,9 +156,22 @@ def run():
     r["importance"] = pd.DataFrame({"MAE_increase_s": imp.importances_mean, "std_s": imp.importances_std},
                                    index=FEATURES).sort_values("MAE_increase_s", ascending=False).round(2)
 
-    # Part E: leave-one-battalion-out on train+valid.
-    r["spatial_table"], r["spatial_summary"] = spatial_cv(trval, r["params"], r["n_iter"])
+    # Spatial CV on train+valid. Primary: KMeans location blocks, so the held-out
+    # fold's area is genuinely absent from training.
+    block_folds, r["trval_blocks"], r["block_km"] = spatial_block_folds(trval, n_blocks=10, seed=0, verbose=False)
+    centers = r["block_km"].cluster_centers_
+    r["block_rows"] = pd.DataFrame({
+        "rows": pd.Series(r["trval_blocks"]).value_counts().sort_index(),
+        "centroid_lat": centers[:, 1].round(4),
+        "centroid_lon": (centers[:, 0] / r["block_km"].lon_scale_).round(4)}).rename_axis("block")
+    r["block_table"], r["block_summary"] = spatial_cv(trval, r["params"], r["n_iter"],
+                                                      block_folds, r["trval_blocks"])
+    # Kept for reference: stability across battalions, not a clean spatial hold-out,
+    # because station_area is not nested in battalion (see battalion_nesting).
+    r["spatial_table"], r["spatial_summary"] = spatial_cv(trval, r["params"], r["n_iter"],
+                                                          spatial_folds(trval, verbose=False), trval["battalion"])
     r["nesting"] = battalion_nesting(trval)
+    r["model"], r["cats"], r["trval"] = model, cats, trval
     return r
 
 
@@ -198,8 +216,7 @@ def report(r):
         print(f"\n{'overall' if seg is None else 'by ' + seg}:")
         print(metric_table(yt, r["test_preds"], None if seg is None else r["test"][seg]).to_string())
 
-    print("\npaired cluster bootstrap over call_number (1000 resamples, seed 0), positive = model better:")
-    print(r["bootstrap"].round(1).to_string())
+    print_bootstraps(r)
 
     print(f"\nsensitivity: test without R7 ({len(r['test_no_r7']):,} rows, "
           f"{len(r['test_no_r7']) - len(r['test']):,} more than with R7), overall:")
@@ -210,9 +227,29 @@ def report(r):
     print("\npermutation importance on test (MAE scoring, 5 repeats, seed 0):")
     print(r["importance"].to_string())
 
-    section("E. Spatial CV: leave-one-battalion-out on train+valid")
+    print_spatial_cv(r)
+
+
+def print_bootstraps(r):
+    print(f"\npaired bootstrap, B2 - model on TEST (1000 resamples, seed 0), positive = model better:")
+    print(f"headline: resampling calendar days of received_dttm ({r['n_test_days']} clusters)")
+    print(r["bootstrap_day"].round(1).to_string())
+    print(f"\nfor comparison: resampling call_number ({r['test']['call_number'].nunique():,} clusters)")
+    print(r["bootstrap"].round(1).to_string())
+
+
+def print_spatial_cv(r, tag="E"):
+    section(f"{tag}. Spatial CV on train+valid: leave-one-spatial-block-out (KMeans, 10 blocks, seed 0)")
+    print("rows per block and block centroids (KMeans on one point per call, lon scaled by cos(lat)):")
+    print(r["block_rows"].to_string())
+    print()
+    print(r["block_table"].to_string(index=False))
+    print("\nacross folds:")
+    print(r["block_summary"].to_string())
+
+    section(f"{tag}2. Stability across battalions (not a clean spatial hold-out)")
     print("CAVEAT: station_area is not nested in battalion (train+valid):", r["nesting"])
-    print("so held-out battalions share station areas/locations with training; not a clean unseen-area test.\n")
+    print("so held-out battalions share station areas/locations with training.\n")
     print(r["spatial_table"].to_string(index=False))
     print("\nacross folds:")
     print(r["spatial_summary"].to_string())

@@ -139,3 +139,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def call_field_consistency(raw):
+    """Is battalion an incident field (constant within a call) or a unit field?
+    Uses calls with >1 row in the raw file, all unit types."""
+    multi = raw[raw.groupby("call_number")["call_number"].transform("size") > 1]
+    per_call = multi.groupby("call_number")
+    out = {"calls_with_>1_row": per_call.ngroups}
+    for col in ["battalion", "station_area"]:
+        differs = per_call[col].nunique(dropna=False) > 1
+        out[f"{col}_differs_within_call_%"] = round(float(100 * differs.mean()), 2)
+    # Context: if battalion were a fixed unit attribute, each unit would have one battalion.
+    out["unit_ids_in_>1_battalion_%"] = round(float(100 * (raw.groupby("unit_id")["battalion"].nunique() > 1).mean()), 1)
+    return out
+
+
+def seq_priority_medians(df):
+    """Median travel time and n by unit_sequence_in_call_dispatch (1, 2, 3+) x priority_group."""
+    seq = df["unit_sequence_in_call_dispatch"].clip(upper=3).map({1: "1", 2: "2", 3: "3+"}).rename("unit_seq")
+    g = df.groupby([seq, priority_group(df["original_priority_cat"]).rename("priority_group")])["travel_time_s"]
+    return pd.DataFrame({"n": g.size(), "median_s": g.median()}).unstack("priority_group")

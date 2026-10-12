@@ -122,7 +122,13 @@ other   B0 global median            4935  302.5  428.4  213.0  690.6           2
         B2 station x priority_cat   4935  269.3  381.8  194.0  586.0           33.2
         LightGBM L1                 4935  248.4  359.7  169.0  547.5           38.3
 
-paired cluster bootstrap over call_number (1000 resamples, seed 0), positive = model better:
+paired bootstrap, B2 - model on TEST (1000 resamples, seed 0), positive = model better:
+headline: resampling calendar days of received_dttm (92 clusters)
+                        estimate  ci_2.5%  ci_97.5%
+MAE(B2) - MAE(model)        15.9     14.8      17.0
+RMSE(B2) - RMSE(model)      14.1     12.7      15.5
+
+for comparison: resampling call_number (25,027 clusters)
                         estimate  ci_2.5%  ci_97.5%
 MAE(B2) - MAE(model)        15.9     14.8      17.1
 RMSE(B2) - RMSE(model)      14.1     12.9      15.4
@@ -158,10 +164,46 @@ battalion                                 1.08   0.10
 day_of_week                               0.37   0.09
 
 ==============================================================================
-E. Spatial CV: leave-one-battalion-out on train+valid
+E. Spatial CV on train+valid: leave-one-spatial-block-out (KMeans, 10 blocks, seed 0)
+==============================================================================
+rows per block and block centroids (KMeans on one point per call, lon scaled by cos(lat)):
+        rows  centroid_lat  centroid_lon
+block                                   
+0      24402       37.7810     -122.4101
+1       4581       37.7230     -122.4292
+2       3617       37.7638     -122.4533
+3       5388       37.7319     -122.3941
+4      10104       37.7871     -122.4304
+5       7034       37.7968     -122.4023
+6       3103       37.7487     -122.4913
+7       3100       37.7794     -122.4838
+8      10380       37.7607     -122.4188
+9       3500       37.7212     -122.4649
+
+held_out  rows  MAE_LightGBM L1  MAE_B2  B2_minus_model  B2_cell_share_%
+       0 24402            213.6   225.9            12.3             66.5
+       8 10380            205.5   209.0             3.6             36.0
+       4 10104            209.9   225.7            15.8             47.9
+       5  7034            253.8   275.8            22.0             74.0
+       3  5388            217.5   245.1            27.6             40.4
+       1  4581            227.7   244.4            16.7             57.6
+       2  3617            216.0   229.4            13.3             60.4
+       9  3500            219.9   239.9            19.9             74.1
+       6  3103            239.6   263.5            24.0             26.4
+       7  3100            229.8   250.7            20.9             37.1
+
+across folds:
+      MAE_LightGBM L1  MAE_B2  B2_minus_model
+mean            223.3   240.9            17.6
+std              14.7    19.6             6.9
+min             205.5   209.0             3.6
+max             253.8   275.8            27.6
+
+==============================================================================
+E2. Stability across battalions (not a clean spatial hold-out)
 ==============================================================================
 CAVEAT: station_area is not nested in battalion (train+valid): {'station_areas': 44, 'station_areas_in_>1_battalion': 36, 'rows_outside_modal_battalion_%': 24.4}
-so held-out battalions share station areas/locations with training; not a clean unseen-area test.
+so held-out battalions share station areas/locations with training.
 
 held_out  rows  MAE_LightGBM L1  MAE_B2  B2_minus_model  B2_cell_share_%
      B02 15536            196.6   210.0            13.3             93.7

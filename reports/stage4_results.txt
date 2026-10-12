@@ -1,0 +1,182 @@
+
+==============================================================================
+A1. Is battalion an incident or a unit field? (RAW, calls with >1 row)
+==============================================================================
+calls_with_>1_row: 47214
+battalion_differs_within_call_%: 0.0
+station_area_differs_within_call_%: 0.0
+unit_ids_in_>1_battalion_%: 94.2
+
+==============================================================================
+A2. Cleaned ambulance data (all splits): travel_time_s by unit_seq x priority_group
+==============================================================================
+                    n               median_s              
+priority_group      2      3  other        2      3  other
+unit_seq                                                  
+1               30834  13813  13233    710.0  242.0  603.0
+2                3661  28650   6257    533.0  388.0  393.0
+3+                409   2179   1425    608.0  479.0  456.0
+
+==============================================================================
+B. Spatial CV on train+valid: leave-one-spatial-block-out (KMeans, 10 blocks, seed 0)
+==============================================================================
+rows per block and block centroids (KMeans on one point per call, lon scaled by cos(lat)):
+        rows  centroid_lat  centroid_lon
+block                                   
+0      24402       37.7810     -122.4101
+1       4581       37.7230     -122.4292
+2       3617       37.7638     -122.4533
+3       5388       37.7319     -122.3941
+4      10104       37.7871     -122.4304
+5       7034       37.7968     -122.4023
+6       3103       37.7487     -122.4913
+7       3100       37.7794     -122.4838
+8      10380       37.7607     -122.4188
+9       3500       37.7212     -122.4649
+
+held_out  rows  MAE_LightGBM L1  MAE_B2  B2_minus_model  B2_cell_share_%
+       0 24402            213.6   225.9            12.3             66.5
+       8 10380            205.5   209.0             3.6             36.0
+       4 10104            209.9   225.7            15.8             47.9
+       5  7034            253.8   275.8            22.0             74.0
+       3  5388            217.5   245.1            27.6             40.4
+       1  4581            227.7   244.4            16.7             57.6
+       2  3617            216.0   229.4            13.3             60.4
+       9  3500            219.9   239.9            19.9             74.1
+       6  3103            239.6   263.5            24.0             26.4
+       7  3100            229.8   250.7            20.9             37.1
+
+across folds:
+      MAE_LightGBM L1  MAE_B2  B2_minus_model
+mean            223.3   240.9            17.6
+std              14.7    19.6             6.9
+min             205.5   209.0             3.6
+max             253.8   275.8            27.6
+
+==============================================================================
+B2. Stability across battalions (not a clean spatial hold-out)
+==============================================================================
+CAVEAT: station_area is not nested in battalion (train+valid): {'station_areas': 44, 'station_areas_in_>1_battalion': 36, 'rows_outside_modal_battalion_%': 24.4}
+so held-out battalions share station areas/locations with training.
+
+held_out  rows  MAE_LightGBM L1  MAE_B2  B2_minus_model  B2_cell_share_%
+     B02 15536            196.6   210.0            13.3             93.7
+     B03 14380            233.7   247.3            13.6             61.9
+     B04  8071            220.2   233.4            13.2             65.3
+     B01  6535            227.5   243.6            16.1             66.9
+     B10  6146            233.6   243.4             9.7             35.6
+     B08  5892            232.1   257.0            24.9             27.9
+     B09  5857            222.4   243.0            20.6             42.4
+     B06  4746            198.8   208.9            10.1             56.9
+     B05  4555            201.3   211.8            10.5             76.6
+     B07  3491            225.5   245.7            20.2             16.5
+
+across folds:
+      MAE_LightGBM L1  MAE_B2  B2_minus_model
+mean            219.2   234.4            15.2
+std              14.7    17.6             5.1
+min             196.6   208.9             9.7
+max             233.7   257.0            24.9
+
+==============================================================================
+C. Paired bootstrap on TEST
+==============================================================================
+
+paired bootstrap, B2 - model on TEST (1000 resamples, seed 0), positive = model better:
+headline: resampling calendar days of received_dttm (92 clusters)
+                        estimate  ci_2.5%  ci_97.5%
+MAE(B2) - MAE(model)        15.9     14.8      17.0
+RMSE(B2) - RMSE(model)      14.1     12.7      15.5
+
+for comparison: resampling call_number (25,027 clusters)
+                        estimate  ci_2.5%  ci_97.5%
+MAE(B2) - MAE(model)        15.9     14.8      17.1
+RMSE(B2) - RMSE(model)      14.1     12.9      15.4
+
+==============================================================================
+D. 80% prediction intervals
+==============================================================================
+quantile models: LightGBM objective=quantile, {'num_leaves': 15, 'min_child_samples': 20}, learning_rate=0.05, fit on train
+iterations chosen on valid pinball loss: {0.1: 934, 0.9: 610}
+crossed lo > hi (reordered): valid 0, test 0
+
+1. raw quantile intervals:
+           n  coverage  mean_width_s
+split                               
+valid   8266     0.783         633.5
+test   25252     0.777         623.4
+
+2. CQR on valid: n=8,266, quantile level=0.80015, q=9.1 s
+   final interval = [lo - q, hi + q]
+
+3. TEST comparison (B2 = train+valid 10th-90th pct per B2 cell):
+                          n  raw_QR_cov_%  raw_QR_width_s  CQR_cov_%  CQR_width_s  B2_cov_%  B2_width_s
+segment                                                                                                
+ALL                   25252          77.7           623.4       79.5        641.7      79.3       683.8
+unit_type=MEDIC       19093          77.7           623.6       79.6        641.9      79.9       682.2
+unit_type=PRIVATE      6159          77.8           622.6       79.4        640.9      77.7       688.9
+priority_group=2       8988          77.9           860.2       79.0        878.4      78.9       904.9
+priority_group=3      11329          77.6           379.9       80.0        398.2      79.6       448.8
+priority_group=other   4935          77.7           751.1       79.5        769.4      79.5       820.8
+
+==============================================================================
+E. Error analysis on TEST (LightGBM L1 point model, CQR intervals)
+==============================================================================
+
+by priority_group:
+                    n    MAE  P90AE  CQR_cov_%  CQR_width_s
+priority_group                                             
+2                8988  288.2  594.4       79.0        878.4
+3               11329  141.7  286.2       80.0        398.2
+other            4935  248.4  547.5       79.5        769.4
+
+by unit_type:
+               n    MAE  P90AE  CQR_cov_%  CQR_width_s
+unit_type                                             
+MEDIC      19093  213.6  487.3       79.6        641.9
+PRIVATE     6159  218.1  502.3       79.4        640.9
+
+by hour_band:
+               n    MAE  P90AE  CQR_cov_%  CQR_width_s
+hour_band                                             
+00-06       4646  196.1  441.3       79.2        580.6
+07-18      15252  226.0  519.4       79.5        666.8
+19-23       5354  198.6  443.4       79.8        623.2
+
+by spatial_block:
+                  n    MAE  P90AE  CQR_cov_%  CQR_width_s
+spatial_block                                            
+0              8168  206.6  478.2       80.5        629.2
+1              1505  216.8  482.8       78.9        643.9
+2              1144  216.6  478.5       78.1        635.7
+3              1885  198.6  440.3       80.6        638.9
+4              3363  221.3  503.9       78.9        631.1
+5              2362  232.6  542.5       79.3        712.6
+6              1066  237.7  503.4       78.4        697.3
+7              1172  245.4  552.3       77.2        703.1
+8              3360  199.6  454.7       79.7        589.9
+9              1227  228.9  541.9       78.3        659.2
+
+station_area with >= 200 test rows: 37 of 44
+lowest MAE (best 5):
+                n    MAE  P90AE  CQR_cov_%  CQR_width_s
+station_area                                           
+25            231  179.2  411.1       84.4        729.5
+42            411  180.8  417.6       79.6        560.8
+06            838  184.8  430.3       81.0        573.9
+29            355  188.5  407.8       79.2        579.9
+09            343  191.5  434.1       80.8        652.8
+highest MAE (worst 5):
+                n    MAE  P90AE  CQR_cov_%  CQR_width_s
+station_area                                           
+04            270  268.1  615.8       74.8        758.6
+14            425  257.9  595.8       77.4        746.0
+16            412  254.3  578.3       78.9        689.6
+23            291  253.0  490.1       76.3        714.9
+35            545  252.2  609.5       78.5        741.7
+
+tail: rows with actual > test 90th percentile (1094 s); signed error = actual - predicted (positive = under-predicts)
+                              n    MAE  mean_signed_error  under_predicted_%
+model                                                                       
+LightGBM L1                2526  754.3              754.3              100.0
+B2 station x priority_cat  2526  791.4              791.4              100.0

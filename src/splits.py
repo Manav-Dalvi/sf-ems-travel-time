@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+from sklearn.cluster import KMeans
 from sklearn.model_selection import GroupKFold
 
 # Inclusive date ranges on received_dttm (whole days).
@@ -69,3 +70,47 @@ def spatial_folds(train_df: pd.DataFrame, verbose=True) -> np.ndarray:
         print(f"\nleave-one-battalion-out: {n_groups} folds")
         print(pd.crosstab(group.to_numpy(), folds, rownames=["battalion"], colnames=["fold"]).to_string())
     return folds
+
+
+def _block_xy(df, lon_scale):
+    # Scale lon by cos(latitude) so one unit means ~the same distance on both axes;
+    # otherwise KMeans would cut blocks that are stretched east-west.
+    return np.column_stack([df["lon"].to_numpy() * lon_scale, df["lat"].to_numpy()])
+
+
+def fit_spatial_blocks(df, n_blocks=10, seed=0) -> KMeans:
+    """KMeans on incident location -> contiguous (Voronoi) blocks. One point per call,
+    so multi-unit calls don't pull centroids toward themselves."""
+    calls = df.groupby("call_number")[["lat", "lon"]].first()
+    lon_scale = np.cos(np.radians(calls["lat"].median()))
+    # errstate: macOS Accelerate BLAS raises spurious FP warnings inside sklearn's matmuls.
+    with np.errstate(all="ignore"):
+        km = KMeans(n_clusters=n_blocks, n_init=10, random_state=seed).fit(_block_xy(calls, lon_scale))
+    km.lon_scale_ = lon_scale
+    return km
+
+
+def assign_spatial_blocks(km: KMeans, df) -> np.ndarray:
+    with np.errstate(all="ignore"):
+        return km.predict(_block_xy(df, km.lon_scale_))
+
+
+def spatial_block_folds(df, n_blocks=10, seed=0, verbose=True):
+    """Leave-one-spatial-block-out folds. Returns (fold per row, block per row, fitted KMeans)."""
+    km = fit_spatial_blocks(df, n_blocks, seed)
+    blocks = assign_spatial_blocks(km, df)
+
+    folds = np.empty(len(df), dtype=int)
+    for fold, (_, test_idx) in enumerate(GroupKFold(n_splits=n_blocks).split(df, groups=blocks)):
+        folds[test_idx] = fold
+    # A call has one location in this data, so it lands in one block; check anyway.
+    assert (pd.Series(folds).groupby(df["call_number"].to_numpy()).nunique() == 1).all(), \
+        "a call_number sits in more than one fold"
+
+    if verbose:
+        centroids = km.cluster_centers_
+        print(pd.DataFrame({"rows": pd.Series(blocks).value_counts().sort_index(),
+                            "centroid_lat": centroids[:, 1].round(4),
+                            "centroid_lon": (centroids[:, 0] / km.lon_scale_).round(4)},
+                           ).rename_axis("block").to_string())
+    return folds, blocks, km

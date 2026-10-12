@@ -116,3 +116,18 @@ def permutation_importance_bar(importance):
     ax.set(title="Permutation importance on test (5 repeats; bar = mean, line = std)",
            xlabel="increase in test MAE when feature is shuffled (s)")
     return _save(fig, "06_permutation_importance.png")
+
+
+def pred_vs_actual_hexbin(y_true, y_pred, max_s=3600):
+    fig, ax = plt.subplots(figsize=(7, 6.5))
+    # Log colour scale: most rows sit in a dense core that would otherwise hide the spread.
+    hb = ax.hexbin(y_pred, y_true, gridsize=60, extent=(0, max_s, 0, max_s), bins="log",
+                   mincnt=1, cmap=SEQ_BLUE, linewidths=0)
+    ax.plot([0, max_s], [0, max_s], color=NEUTRAL, linestyle="--", linewidth=1, label="y = x")
+    ax.legend(frameon=False, loc="lower right")
+    fig.colorbar(hb, ax=ax, shrink=0.8, label="rows per hexagon (log)")
+    ax.set_aspect("equal")
+    ax.grid(False)
+    ax.set(title="Test: actual vs predicted travel time (LightGBM L1)",
+           xlabel="predicted travel_time_s", ylabel="actual travel_time_s", xlim=(0, max_s), ylim=(0, max_s))
+    return _save(fig, "07_pred_vs_actual_hexbin.png")
