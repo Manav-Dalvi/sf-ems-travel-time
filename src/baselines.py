@@ -23,22 +23,22 @@ MIN_CELL_ROWS = 30
 # Each level is (label, grouping keys), finest first; [] is the global fallback.
 L0 = ("B0", [])
 L1 = ("B1", ["original_priority_cat"])
-L2 = ("B2", ["station_area", "priority_group"])
-L3 = ("B3", ["station_area", "priority_group", "hour_band"])
+# B2 uses the full priority code: collapsing letter codes into "other" merged fast (E)
+# and slow (A) codes and made B2 worse than B1 on the "other" group in Stage 2.
+L2 = ("B2", ["station_area", "original_priority_cat"])
+# B3 (B2 x hour band) was dropped after Stage 2: the hour band added nothing on valid.
 BASELINES = {
     "B0 global median": [L0],
     "B1 priority_cat": [L1, L0],
-    "B2 station x prio_grp": [L2, L1, L0],
-    "B3 station x prio_grp x hour_band": [L3, L2, L1, L0],
+    "B2 station x priority_cat": [L2, L1, L0],
 }
+B2_NAME = "B2 station x priority_cat"
 
 
 def add_baseline_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    # Only used to segment results; B2 itself now uses the full original_priority_cat.
     df["priority_group"] = priority_group(df["original_priority_cat"])
-    # Bands from the request; hour of received_dttm is known before dispatch.
-    df["hour_band"] = pd.cut(df["received_dttm"].dt.hour, [-1, 6, 18, 23],
-                             labels=["00-06", "07-18", "19-23"]).astype(str)
     return df
 
 
@@ -89,25 +89,31 @@ def metric_table(y, preds: dict, segment=None) -> pd.DataFrame:
     return t.round(1).rename(columns={f"within±{metrics.WITHIN_S}s": f"within±{metrics.WITHIN_S}s_%"})
 
 
+def fit_predict(train, target):
+    """Fit every baseline on `train`, predict `target`. Returns (preds dict, fallback counts)."""
+    preds, fallbacks = {}, {}
+    for name, levels in BASELINES.items():
+        preds[name], used = CellQuantile(levels).fit(train).predict(target)
+        fallbacks[name] = used.value_counts()
+    fallbacks = pd.DataFrame(fallbacks).T.reindex(columns=["B2", "B1", "B0"]).fillna(0).astype(int)
+    return preds, fallbacks
+
+
+def b2_interval(train, target, lo_q=0.1, hi_q=0.9):
+    lo, _ = CellQuantile(BASELINES[B2_NAME], q=lo_q).fit(train).predict(target)
+    hi, _ = CellQuantile(BASELINES[B2_NAME], q=hi_q).fit(train).predict(target)
+    return lo, hi
+
+
 def run():
     """Fit every baseline on train, predict valid. Returns everything the report/notebook need."""
     df = add_baseline_columns(load_processed())
     df["split"] = assign_time_split(df)
     train, valid = df[df["split"] == "train"], df[df["split"] == "valid"]
-
-    preds, fallbacks = {}, {}
-    for name, levels in BASELINES.items():
-        preds[name], used = CellQuantile(levels).fit(train).predict(valid)
-        fallbacks[name] = used.value_counts()
-
-    lo, _ = CellQuantile(BASELINES["B2 station x prio_grp"], q=0.1).fit(train).predict(valid)
-    hi, _ = CellQuantile(BASELINES["B2 station x prio_grp"], q=0.9).fit(train).predict(valid)
-
-    return {
-        "df": df, "valid": valid, "preds": preds, "lo": lo, "hi": hi,
-        "split_counts": split_counts(df, df["split"]),
-        "fallbacks": pd.DataFrame(fallbacks).T.reindex(columns=["B3", "B2", "B1", "B0"]).fillna(0).astype(int),
-    }
+    preds, fallbacks = fit_predict(train, valid)
+    lo, hi = b2_interval(train, valid)
+    return {"df": df, "valid": valid, "preds": preds, "lo": lo, "hi": hi,
+            "split_counts": split_counts(df, df["split"]), "fallbacks": fallbacks}
 
 
 def interval_table(valid, lo, hi):

@@ -102,3 +102,17 @@ def box_median_map(amb):
     ax.set(title=f"Median ambulance travel time per box ({len(per_box):,} boxes; point = median lon/lat)",
            xlabel="lon", ylabel="lat")
     return _save(fig, "05_box_median_map.png")
+
+
+def permutation_importance_bar(importance):
+    """`importance`: DataFrame indexed by feature with MAE_increase_s and std_s columns."""
+    imp = importance.sort_values("MAE_increase_s")
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.barh(imp.index, imp["MAE_increase_s"], xerr=imp["std_s"], color=UNIT_COLORS["MEDIC"],
+            height=0.6, error_kw={"ecolor": NEUTRAL, "linewidth": 1})
+    for y, v in enumerate(imp["MAE_increase_s"]):
+        ax.annotate(f"{v:.1f}", (v, y), xytext=(6, 0), textcoords="offset points", va="center", color=NEUTRAL)
+    ax.grid(axis="y", visible=False)
+    ax.set(title="Permutation importance on test (5 repeats; bar = mean, line = std)",
+           xlabel="increase in test MAE when feature is shuffled (s)")
+    return _save(fig, "06_permutation_importance.png")

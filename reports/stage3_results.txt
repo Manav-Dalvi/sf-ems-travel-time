@@ -1,0 +1,183 @@
+
+==============================================================================
+Features (all known at dispatch) and split
+==============================================================================
+used: ['lat', 'lon', 'als_unit', 'unit_sequence_in_call_dispatch', 'hour', 'day_of_week', 'workload_60m', 'original_priority_cat', 'station_area', 'battalion', 'unit_type']
+workload_60m self-check: passed
+        rows  calls
+split              
+train  66943  66358
+valid   8266   8195
+test   25252  25027
+
+==============================================================================
+A. Revised baselines on VALID (B2 = station_area x original_priority_cat)
+==============================================================================
+fallback level per valid row:
+                             B2    B1    B0
+B0 global median              0     0  8266
+B1 priority_cat               0  8261     5
+B2 station x priority_cat  8018   243     5
+
+overall:
+                                      n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                  
+ALL     B0 global median           8266  281.5  408.8  200.0  640.0           30.8
+        B1 priority_cat            8266  240.3  357.4  165.0  510.0           38.3
+        B2 station x priority_cat  8266  232.6  352.3  154.0  511.0           41.4
+
+by unit_type:
+                                      n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                  
+MEDIC   B0 global median           6318  285.2  412.3  199.0  659.0           30.7
+        B1 priority_cat            6318  242.4  359.1  166.0  525.3           38.7
+        B2 station x priority_cat  6318  235.5  353.5  156.0  519.3           41.1
+PRIVATE B0 global median           1948  269.5  397.1  203.0  570.3           31.2
+        B1 priority_cat            1948  233.4  351.7  162.0  471.3           37.0
+        B2 station x priority_cat  1948  223.1  348.1  147.8  461.6           42.2
+
+by priority_group:
+                                      n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                  
+2       B0 global median           2981  372.5  510.4  273.0  804.0           24.0
+        B1 priority_cat            2981  307.2  416.6  249.0  589.0           24.6
+        B2 station x priority_cat  2981  299.7  410.6  236.5  599.5           26.3
+3       B0 global median           3564  189.5  267.1  157.0  325.7           38.0
+        B1 priority_cat            3564  163.7  267.6  112.0  318.0           53.5
+        B2 station x priority_cat  3564  153.8  260.0   99.0  295.0           58.6
+other   B0 global median           1721  314.7  451.1  220.0  725.0           27.8
+        B1 priority_cat            1721  282.8  405.6  208.0  594.0           30.6
+        B2 station x priority_cat  1721  279.5  404.9  199.0  598.0           31.8
+
+B2 80% interval on valid:
+                      coverage_%  mean_width_s
+segment                                       
+ALL                         79.6         689.4
+unit_type=MEDIC             79.9         686.7
+unit_type=PRIVATE           78.8         697.9
+priority_group=2            79.1         901.0
+priority_group=3            80.5         446.1
+priority_group=other        78.6         826.4
+
+==============================================================================
+C. Tuning on VALID (LightGBM, objective=l1, learning_rate=0.05; fit on train)
+==============================================================================
+ num_leaves  min_child_samples  best_iter  hit_cap  valid_MAE
+         15                 20       1519    False     216.07
+         15                100        988    False     216.43
+         31                 20        547    False     216.10
+         31                100        732    False     216.42
+         63                 20        214    False     216.20
+         63                100        283    False     216.15
+
+chosen: {'num_leaves': 15, 'min_child_samples': 20}, n_iter=1519
+
+ablation (chosen config, iterations re-selected on valid):
+            features  best_iter  valid_MAE
+                 all       1519     216.07
+without workload_60m       1307     216.89
+
+==============================================================================
+D. TEST (fit on train+valid; 25,252 rows)
+==============================================================================
+baseline fallback level per test row:
+                              B2     B1     B0
+B0 global median               0      0  25252
+B1 priority_cat                0  25248      4
+B2 station x priority_cat  24672    576      4
+
+overall:
+                                       n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                   
+ALL     B0 global median           25252  279.4  403.8  198.0  634.9           31.0
+        B1 priority_cat            25252  240.1  353.9  165.0  514.0           38.3
+        B2 station x priority_cat  25252  230.6  346.6  151.0  507.5           41.8
+        LightGBM L1                25252  214.7  332.5  132.4  490.2           46.5
+
+by unit_type:
+                                       n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                   
+MEDIC   B0 global median           19093  280.3  404.9  197.0  643.0           31.6
+        B1 priority_cat            19093  239.3  351.4  164.0  518.0           38.8
+        B2 station x priority_cat  19093  230.6  344.0  152.0  513.4           41.9
+        LightGBM L1                19093  213.6  325.8  134.0  487.3           46.2
+PRIVATE B0 global median            6159  276.5  400.5  201.0  596.2           29.2
+        B1 priority_cat             6159  242.8  361.6  168.0  503.2           36.9
+        B2 station x priority_cat   6159  230.8  354.7  149.5  484.0           41.3
+        LightGBM L1                 6159  218.1  352.6  127.8  502.3           47.7
+
+by priority_group:
+                                       n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                   
+2       B0 global median            8988  375.1  514.6  270.0  818.0           24.6
+        B1 priority_cat             8988  308.4  418.6  247.0  608.0           25.2
+        B2 station x priority_cat   8988  301.0  412.5  236.0  606.3           26.9
+        LightGBM L1                 8988  288.2  401.0  220.2  594.4           28.9
+3       B0 global median           11329  193.4  270.9  163.0  335.0           36.9
+        B1 priority_cat            11329  170.7  274.3  116.0  338.0           51.5
+        B2 station x priority_cat  11329  157.9  263.3  102.0  318.0           57.3
+        LightGBM L1                11329  141.7  250.1   86.2  286.2           64.1
+other   B0 global median            4935  302.5  428.4  213.0  690.6           29.1
+        B1 priority_cat             4935  275.2  386.2  203.0  575.6           31.8
+        B2 station x priority_cat   4935  269.3  381.8  194.0  586.0           33.2
+        LightGBM L1                 4935  248.4  359.7  169.0  547.5           38.3
+
+paired cluster bootstrap over call_number (1000 resamples, seed 0), positive = model better:
+                        estimate  ci_2.5%  ci_97.5%
+MAE(B2) - MAE(model)        15.9     14.8      17.1
+RMSE(B2) - RMSE(model)      14.1     12.9      15.4
+
+sensitivity: test without R7 (25,256 rows, 4 more than with R7), overall:
+                                       n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                   
+ALL     B0 global median           25256  280.1  408.4  198.0  635.0           31.0
+        B1 priority_cat            25256  240.8  358.8  165.0  514.0           38.3
+        B2 station x priority_cat  25256  231.3  351.6  151.0  508.0           41.8
+        LightGBM L1                25256  215.4  337.8  132.5  490.5           46.5
+
+with vs without R7:
+                           MAE_R7  MAE_noR7  RMSE_R7  RMSE_noR7  RMSE_change
+model                                                                       
+B0 global median            279.4     280.1    403.8      408.4          4.6
+B1 priority_cat             240.1     240.8    353.9      358.8          4.9
+B2 station x priority_cat   230.6     231.3    346.6      351.6          5.0
+LightGBM L1                 214.7     215.4    332.5      337.8          5.2
+
+permutation importance on test (MAE scoring, 5 repeats, seed 0):
+                                MAE_increase_s  std_s
+original_priority_cat                    77.16   0.27
+unit_sequence_in_call_dispatch           23.80   0.32
+station_area                             11.13   0.47
+workload_60m                              3.61   0.20
+lat                                       3.54   0.08
+lon                                       2.70   0.15
+hour                                      2.63   0.17
+unit_type                                 1.63   0.25
+als_unit                                  1.41   0.20
+battalion                                 1.08   0.10
+day_of_week                               0.37   0.09
+
+==============================================================================
+E. Spatial CV: leave-one-battalion-out on train+valid
+==============================================================================
+CAVEAT: station_area is not nested in battalion (train+valid): {'station_areas': 44, 'station_areas_in_>1_battalion': 36, 'rows_outside_modal_battalion_%': 24.4}
+so held-out battalions share station areas/locations with training; not a clean unseen-area test.
+
+held_out  rows  MAE_LightGBM L1  MAE_B2  B2_minus_model  B2_cell_share_%
+     B02 15536            196.6   210.0            13.3             93.7
+     B03 14380            233.7   247.3            13.6             61.9
+     B04  8071            220.2   233.4            13.2             65.3
+     B01  6535            227.5   243.6            16.1             66.9
+     B10  6146            233.6   243.4             9.7             35.6
+     B08  5892            232.1   257.0            24.9             27.9
+     B09  5857            222.4   243.0            20.6             42.4
+     B06  4746            198.8   208.9            10.1             56.9
+     B05  4555            201.3   211.8            10.5             76.6
+     B07  3491            225.5   245.7            20.2             16.5
+
+across folds:
+      MAE_LightGBM L1  MAE_B2  B2_minus_model
+mean            219.2   234.4            15.2
+std              14.7    17.6             5.1
+min             196.6   208.9             9.7
+max             233.7   257.0            24.9

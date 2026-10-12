@@ -13,62 +13,55 @@ test is held out: not used below
 ==============================================================================
 Fallback level used per VALID row (cell needs >= 30 train rows)
 ==============================================================================
-                                     B3    B2    B1    B0
-B0 global median                      0     0     0  8266
-B1 priority_cat                       0     0  8261     5
-B2 station x prio_grp                 0  8263     3     0
-B3 station x prio_grp x hour_band  8143   120     3     0
+                             B2    B1    B0
+B0 global median              0     0  8266
+B1 priority_cat               0  8261     5
+B2 station x priority_cat  8018   243     5
 
 ==============================================================================
 VALID: overall
 ==============================================================================
-                                              n    MAE   RMSE  MedAE  P90AE  within±120s_%
-segment baseline                                                                          
-ALL     B0 global median                   8266  281.5  408.8  200.0  640.0           30.8
-        B1 priority_cat                    8266  240.3  357.4  165.0  510.0           38.3
-        B2 station x prio_grp              8266  237.5  358.6  158.0  522.5           40.4
-        B3 station x prio_grp x hour_band  8266  237.5  358.0  159.0  519.5           40.0
+                                      n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                  
+ALL     B0 global median           8266  281.5  408.8  200.0  640.0           30.8
+        B1 priority_cat            8266  240.3  357.4  165.0  510.0           38.3
+        B2 station x priority_cat  8266  232.6  352.3  154.0  511.0           41.4
 
 ==============================================================================
 VALID: by unit_type
 ==============================================================================
-                                              n    MAE   RMSE  MedAE  P90AE  within±120s_%
-segment baseline                                                                          
-MEDIC   B0 global median                   6318  285.2  412.3  199.0  659.0           30.7
-        B1 priority_cat                    6318  242.4  359.1  166.0  525.3           38.7
-        B2 station x prio_grp              6318  240.4  359.7  160.0  534.7           40.2
-        B3 station x prio_grp x hour_band  6318  240.4  359.4  161.0  532.8           39.7
-PRIVATE B0 global median                   1948  269.5  397.1  203.0  570.3           31.2
-        B1 priority_cat                    1948  233.4  351.7  162.0  471.3           37.0
-        B2 station x prio_grp              1948  228.3  354.8  151.8  484.3           41.2
-        B3 station x prio_grp x hour_band  1948  228.2  353.4  153.2  488.0           41.1
+                                      n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                  
+MEDIC   B0 global median           6318  285.2  412.3  199.0  659.0           30.7
+        B1 priority_cat            6318  242.4  359.1  166.0  525.3           38.7
+        B2 station x priority_cat  6318  235.5  353.5  156.0  519.3           41.1
+PRIVATE B0 global median           1948  269.5  397.1  203.0  570.3           31.2
+        B1 priority_cat            1948  233.4  351.7  162.0  471.3           37.0
+        B2 station x priority_cat  1948  223.1  348.1  147.8  461.6           42.2
 
 ==============================================================================
 VALID: by priority_group
 ==============================================================================
-                                              n    MAE   RMSE  MedAE  P90AE  within±120s_%
-segment baseline                                                                          
-2       B0 global median                   2981  372.5  510.4  273.0  804.0           24.0
-        B1 priority_cat                    2981  307.2  416.6  249.0  589.0           24.6
-        B2 station x prio_grp              2981  299.7  410.6  236.5  599.5           26.3
-        B3 station x prio_grp x hour_band  2981  298.6  409.8  235.0  605.0           26.4
-3       B0 global median                   3564  189.5  267.1  157.0  325.7           38.0
-        B1 priority_cat                    3564  163.7  267.6  112.0  318.0           53.5
-        B2 station x prio_grp              3564  153.8  260.0   99.0  295.0           58.6
-        B3 station x prio_grp x hour_band  3564  154.2  260.0  100.0  295.9           57.9
-other   B0 global median                   1721  314.7  451.1  220.0  725.0           27.8
-        B1 priority_cat                    1721  282.8  405.6  208.0  594.0           30.6
-        B2 station x prio_grp              1721  303.3  430.7  221.0  666.0           27.1
-        B3 station x prio_grp x hour_band  1721  304.5  429.6  218.5  663.5           26.5
+                                      n    MAE   RMSE  MedAE  P90AE  within±120s_%
+segment baseline                                                                  
+2       B0 global median           2981  372.5  510.4  273.0  804.0           24.0
+        B1 priority_cat            2981  307.2  416.6  249.0  589.0           24.6
+        B2 station x priority_cat  2981  299.7  410.6  236.5  599.5           26.3
+3       B0 global median           3564  189.5  267.1  157.0  325.7           38.0
+        B1 priority_cat            3564  163.7  267.6  112.0  318.0           53.5
+        B2 station x priority_cat  3564  153.8  260.0   99.0  295.0           58.6
+other   B0 global median           1721  314.7  451.1  220.0  725.0           27.8
+        B1 priority_cat            1721  282.8  405.6  208.0  594.0           30.6
+        B2 station x priority_cat  1721  279.5  404.9  199.0  598.0           31.8
 
 ==============================================================================
 VALID: B2 80% interval (train 10th-90th percentile per B2 cell, same fallback)
 ==============================================================================
                       coverage_%  mean_width_s
 segment                                       
-ALL                         79.7         701.8
-unit_type=MEDIC             79.9         699.2
-unit_type=PRIVATE           79.2         710.4
+ALL                         79.6         689.4
+unit_type=MEDIC             79.9         686.7
+unit_type=PRIVATE           78.8         697.9
 priority_group=2            79.1         901.0
 priority_group=3            80.5         446.1
-priority_group=other        79.1         886.2
+priority_group=other        78.6         826.4
