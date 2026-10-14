@@ -2,6 +2,9 @@
 
 **Summary.** On 100,461 San Francisco ambulance responses from 2025, a LightGBM model predicts travel time at dispatch with test MAE 214.7 s. The best simple baseline (median by station area × priority) gets 230.6 s, so the gain is a modest ~7%, but it is consistent across priority groups, unit types and 10 held-out spatial regions. Conformalized 80% intervals reach 79.5% test coverage and are ~6% narrower than the baseline's, but are still about 11 minutes wide. The main limitation is that the ambulance's starting location is unknown.
 
+![Empirical CDFs of travel time: ENGINE vs MEDIC vs PRIVATE (left) and ambulance priority groups (right)](reports/figures/10_travel_time_ecdfs.png)
+*Empirical CDFs of travel time (minutes, cleaned 2025 data). Engines after R2–R5; ambulances after R1–R7. Dotted lines mark group medians.*
+
 ## 1. Question
 
 Can ambulance travel time (en route → on scene) be predicted at the moment a unit is dispatched? This is a small open-data analogue of ambulance driving-time research, built on San Francisco Fire Department dispatch records.
@@ -100,6 +103,9 @@ A hypothesis that timestamps are rounded to the minute by hand was rejected. `on
 | B1 priority | 240.1 | 353.9 | 165.0 | 514.0 | 38.3 |
 | B2 station × priority | 230.6 | 346.6 | 151.0 | 507.5 | 41.8 |
 | LightGBM L1 | 214.7 | 332.5 | 132.4 | 490.2 | 46.5 |
+
+![Predicted vs actual travel time on the test set](reports/figures/07_pred_vs_actual_hexbin.png)
+*Predicted (LightGBM, L1) vs actual travel time on the test set (Oct–Dec 2025).*
 
 **Day-level paired bootstrap, B2 − model** (positive = model better):
 
@@ -211,3 +217,5 @@ done
 ```
 
 Code lives in [`src/`](src/); the notebooks only call it. Figures are in [`reports/figures/`](reports/figures/).
+
+Descriptive figures: notebooks/05_spatial_overview.ipynb (produced after modelling; no modelling decisions were based on them).
