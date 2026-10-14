@@ -1,0 +1,158 @@
+
+==============================================================================
+Stage 7 (supplementary): conditional independence of travel time and turnout given Z
+==============================================================================
+data: cleaned ambulance rows (R1-R7), received Jan-Sep 2025 (train + valid); test period not used
+rows: 75,209   calendar days: 273   ISO weeks: 40
+Z (Stage 3 features): ['lat', 'lon', 'als_unit', 'unit_sequence_in_call_dispatch', 'hour', 'day_of_week', 'workload_60m', 'original_priority_cat', 'station_area', 'battalion', 'unit_type']
+turnout_s = response_dttm - dispatch_dttm (not a dispatch-time feature; used only for this check)
+folds: 5-fold GroupKFold, groups = ISO week of received_dttm; all predictions OOF
+bootstrap: 1000 resamples of calendar days, seed 0
+
+pre-specified thresholds:
+"Practically negligible" = |partial correlation| < 0.05 AND OOF MAE gain from adding turnout < 2 s.
+partial correlation = point estimate of the Pearson correlation of the OOF residuals r_Y, r_X (log1p scale); MAE gain = MAE(without turnout) - MAE(with turnout), OOF, point estimate.
+Large n makes tiny effects statistically significant; these thresholds, not p-values, decide.
+
+==============================================================================
+A. Turnout: non-positive values, quantiles, upper cutoffs
+==============================================================================
+dropped turnout_s <= 0, by unit_type:
+           turnout_s <= 0  turnout_s == 0  turnout_s < 0
+unit_type                                               
+MEDIC                1117            1117              0
+PRIVATE               309             309              0
+total dropped: 1,426   rows kept: 73,783
+
+turnout_s quantiles (s), after dropping <= 0:
+             1%    5%   25%   50%   75%    95%    99%  99.9%
+unit_type                                                   
+MEDIC       2.0   3.0   4.0   7.0  13.0   70.0  207.0  402.0
+PRIVATE    17.0  21.0  33.0  45.0  60.0  131.8  256.3  516.9
+ALL         2.0   3.0   5.0   9.0  36.0   94.0  222.0  430.5
+
+upper cutoffs (sensitivity, both run in full):
+  p99: turnout_s <= 222.0 s; removed 736 rows {'MEDIC': 461, 'PRIVATE': 275}; rows used: 73,047
+  p99.9: turnout_s <= 430.5 s; removed 74 rows {'MEDIC': 44, 'PRIVATE': 30}; rows used: 73,709
+  rows per fold at p99: {0: 13750, 1: 14886, 2: 14911, 3: 14614, 4: 14886}
+  rows per fold at p99.9: {0: 13879, 1: 15021, 2: 15034, 3: 14740, 4: 15035}
+
+==============================================================================
+B. Dependence of OOF residuals (double residual / GCM-style), cutoff p99 = 222.0 s
+==============================================================================
+r_Y = OOF residual of log1p(travel_time_s) ~ Z; r_X = OOF residual of log1p(turnout_s) ~ Z
+residual models: LightGBM {'objective': 'l2', 'num_leaves': 15, 'min_child_samples': 20, 'learning_rate': 0.05, 'n_estimators': 1000}
+CIs: day bootstrap. GCM T = sqrt(n) mean(r_Y r_X) / sd(r_Y r_X); its N(0,1) p-value assumes independent rows, so the day-bootstrap CI for mean(r_Y r_X) is the headline.
+          case      n  days           pearson [95% CI]          spearman [95% CI]        mean(r_Y*r_X) [95% CI]  GCM T p (iid N(0,1))
+       overall 73,047   273 -0.0289 [-0.0361, -0.0205] +0.0009 [-0.0065, +0.0083] -0.01170 [-0.01470, -0.00828]  -6.76        1.4e-11
+    priority 3 32,385   273 -0.0565 [-0.0686, -0.0444] -0.0152 [-0.0251, -0.0055] -0.02129 [-0.02612, -0.01663]  -8.29        1.1e-16
+    priority 2 25,213   273 +0.0098 [-0.0038, +0.0222] +0.0245 [+0.0119, +0.0367] +0.00392 [-0.00151, +0.00893]   1.43           0.15
+priority other 15,449   273 -0.0370 [-0.0558, -0.0189] -0.0091 [-0.0252, +0.0078] -0.01710 [-0.02590, -0.00869]  -4.01        6.1e-05
+         MEDIC 55,556   273 -0.0170 [-0.0263, -0.0079] +0.0249 [+0.0168, +0.0335] -0.00742 [-0.01153, -0.00349]  -3.43        0.00061
+       PRIVATE 17,491   273 -0.1004 [-0.1183, -0.0821] -0.0967 [-0.1114, -0.0822] -0.02530 [-0.03002, -0.02058] -11.27        1.9e-29
+
+==============================================================================
+C. Practical relevance, cutoff p99: Stage 3 point model with vs without turnout_s
+==============================================================================
+LightGBM L1, num_leaves 15, min_child_samples 20, lr 0.05, n_estimators 1519 (Stage 3); OOF
+          case      n  MAE without  MAE with gain (without - with) [95% CI]
+       overall 73,047       209.23    208.69           +0.54 [+0.32, +0.75]
+    priority 3 32,385       136.86    136.35           +0.51 [+0.22, +0.81]
+    priority 2 25,213       279.46    278.98           +0.48 [+0.11, +0.81]
+priority other 15,449       246.32    245.62           +0.70 [+0.09, +1.29]
+         MEDIC 55,556       209.68    209.17           +0.51 [+0.27, +0.74]
+       PRIVATE 17,491       207.79    207.17           +0.62 [+0.13, +1.10]
+
+Spearman(OOF residual of WITHOUT model, actual - predicted; turnout_s):
+          case      n          spearman [95% CI]
+       overall 73,047 +0.0104 [+0.0038, +0.0176]
+    priority 3 32,385 -0.0069 [-0.0175, +0.0035]
+    priority 2 25,213 +0.0297 [+0.0166, +0.0418]
+priority other 15,449 +0.0053 [-0.0099, +0.0204]
+
+==============================================================================
+B. Dependence of OOF residuals (double residual / GCM-style), cutoff p99.9 = 430.5 s
+==============================================================================
+r_Y = OOF residual of log1p(travel_time_s) ~ Z; r_X = OOF residual of log1p(turnout_s) ~ Z
+residual models: LightGBM {'objective': 'l2', 'num_leaves': 15, 'min_child_samples': 20, 'learning_rate': 0.05, 'n_estimators': 1000}
+CIs: day bootstrap. GCM T = sqrt(n) mean(r_Y r_X) / sd(r_Y r_X); its N(0,1) p-value assumes independent rows, so the day-bootstrap CI for mean(r_Y r_X) is the headline.
+          case      n  days           pearson [95% CI]          spearman [95% CI]        mean(r_Y*r_X) [95% CI]  GCM T p (iid N(0,1))
+       overall 73,709   273 -0.0513 [-0.0598, -0.0425] -0.0077 [-0.0152, +0.0000] -0.02215 [-0.02598, -0.01838] -11.20        4.3e-29
+    priority 3 32,637   273 -0.0799 [-0.0932, -0.0676] -0.0244 [-0.0347, -0.0148] -0.03184 [-0.03736, -0.02667] -10.95        6.6e-28
+    priority 2 25,473   273 -0.0118 [-0.0259, +0.0023] +0.0183 [+0.0054, +0.0307] -0.00512 [-0.01130, +0.00101]  -1.59           0.11
+priority other 15,599   273 -0.0602 [-0.0801, -0.0410] -0.0202 [-0.0368, -0.0033] -0.02968 [-0.04005, -0.01997]  -6.24        4.5e-10
+         MEDIC 55,973   273 -0.0399 [-0.0498, -0.0293] +0.0164 [+0.0080, +0.0252] -0.01854 [-0.02336, -0.01355]  -7.51          6e-14
+       PRIVATE 17,736   273 -0.1200 [-0.1379, -0.1019] -0.1053 [-0.1203, -0.0903] -0.03354 [-0.03869, -0.02826] -12.81        1.4e-37
+
+==============================================================================
+C. Practical relevance, cutoff p99.9: Stage 3 point model with vs without turnout_s
+==============================================================================
+LightGBM L1, num_leaves 15, min_child_samples 20, lr 0.05, n_estimators 1519 (Stage 3); OOF
+          case      n  MAE without  MAE with gain (without - with) [95% CI]
+       overall 73,709       209.89    209.20           +0.69 [+0.47, +0.92]
+    priority 3 32,637       137.57    136.84           +0.73 [+0.45, +1.03]
+    priority 2 25,473       280.02    279.56           +0.46 [+0.07, +0.84]
+priority other 15,599       246.67    245.70           +0.97 [+0.36, +1.57]
+         MEDIC 55,973       210.34    209.69           +0.65 [+0.40, +0.90]
+       PRIVATE 17,736       208.45    207.66           +0.79 [+0.34, +1.29]
+
+Spearman(OOF residual of WITHOUT model, actual - predicted; turnout_s):
+          case      n          spearman [95% CI]
+       overall 73,709 +0.0039 [-0.0027, +0.0111]
+    priority 3 32,637 -0.0148 [-0.0254, -0.0047]
+    priority 2 25,473 +0.0252 [+0.0119, +0.0376]
+priority other 15,599 -0.0046 [-0.0194, +0.0096]
+
+==============================================================================
+D. Recording-artefact checks (Part B overall, residual models refit per subset; cutoff p99.9 = 430.5 s)
+==============================================================================
+expected signs: late 'en route' press -> longer turnout, shorter travel (negative);
+unit away from base -> both longer (positive)
+                   case      n  days           pearson [95% CI]          spearman [95% CI]        mean(r_Y*r_X) [95% CI]  GCM T p (iid N(0,1))
+(i) travel_time_s >= 60 73,396   273 -0.0338 [-0.0415, -0.0254] -0.0046 [-0.0125, +0.0031] -0.01394 [-0.01723, -0.01049]  -7.96        1.8e-15
+   (ii) turnout_s >= 15 30,771   273 -0.1523 [-0.1651, -0.1390] -0.1108 [-0.1218, -0.1001] -0.05316 [-0.05816, -0.04829] -20.99        8.6e-98
+             (iii) both 30,569   273 -0.1237 [-0.1359, -0.1120] -0.1005 [-0.1113, -0.0892] -0.04055 [-0.04482, -0.03646] -18.52        1.3e-76
+        (iv) MEDIC only 55,973   273 -0.0400 [-0.0500, -0.0301] +0.0160 [+0.0075, +0.0249] -0.01866 [-0.02343, -0.01382]  -7.53        4.9e-14
+      (iv) PRIVATE only 17,736   273 -0.1246 [-0.1420, -0.1068] -0.1086 [-0.1238, -0.0931] -0.03603 [-0.04122, -0.03069] -13.52        1.2e-41
+
+sign of mean(r_Y*r_X) by its day-bootstrap 95% CI / sign of Pearson point estimate:
+  (i) travel_time_s >= 60: negative; Pearson -0.0338
+  (ii) turnout_s >= 15: negative; Pearson -0.1523
+  (iii) both: negative; Pearson -0.1237
+  (iv) MEDIC only: negative; Pearson -0.0400
+  (iv) PRIVATE only: negative; Pearson -0.1246
+
+==============================================================================
+E. Figure
+==============================================================================
+reports/figures/12_turnout_residual_deciles.png: median r_Y by decile of r_X, overall and by priority_group, cutoff p99.9; 95% bands from the day bootstrap
+
+==============================================================================
+Pre-specified thresholds and verdicts
+==============================================================================
+"Practically negligible" = |partial correlation| < 0.05 AND OOF MAE gain from adding turnout < 2 s.
+partial correlation = point estimate of the Pearson correlation of the OOF residuals r_Y, r_X (log1p scale); MAE gain = MAE(without turnout) - MAE(with turnout), OOF, point estimate.
+Large n makes tiny effects statistically significant; these thresholds, not p-values, decide.
+
+cutoff p99:
+  overall: |partial corr| = 0.0289 (< 0.05); MAE gain = +0.54 s (< 2) -> negligible
+  priority 3: |partial corr| = 0.0565 (>= 0.05); MAE gain = +0.51 s (< 2) -> not negligible
+  priority 2: |partial corr| = 0.0098 (< 0.05); MAE gain = +0.48 s (< 2) -> negligible
+  priority other: |partial corr| = 0.0370 (< 0.05); MAE gain = +0.70 s (< 2) -> negligible
+  MEDIC: |partial corr| = 0.0170 (< 0.05); MAE gain = +0.51 s (< 2) -> negligible
+  PRIVATE: |partial corr| = 0.1004 (>= 0.05); MAE gain = +0.62 s (< 2) -> not negligible
+
+cutoff p99.9:
+  overall: |partial corr| = 0.0513 (>= 0.05); MAE gain = +0.69 s (< 2) -> not negligible
+  priority 3: |partial corr| = 0.0799 (>= 0.05); MAE gain = +0.73 s (< 2) -> not negligible
+  priority 2: |partial corr| = 0.0118 (< 0.05); MAE gain = +0.46 s (< 2) -> negligible
+  priority other: |partial corr| = 0.0602 (>= 0.05); MAE gain = +0.97 s (< 2) -> not negligible
+  MEDIC: |partial corr| = 0.0399 (< 0.05); MAE gain = +0.65 s (< 2) -> negligible
+  PRIVATE: |partial corr| = 0.1200 (>= 0.05); MAE gain = +0.79 s (< 2) -> not negligible
+
+Part D (cutoff p99.9):
+  (i) travel_time_s >= 60: |partial corr| = 0.0338 (< 0.05); MAE criterion not evaluated -> negligible (correlation criterion only)
+  (ii) turnout_s >= 15: |partial corr| = 0.1523 (>= 0.05); MAE criterion not evaluated -> not negligible (correlation criterion only)
+  (iii) both: |partial corr| = 0.1237 (>= 0.05); MAE criterion not evaluated -> not negligible (correlation criterion only)
+  (iv) MEDIC only: |partial corr| = 0.0400 (< 0.05); MAE criterion not evaluated -> negligible (correlation criterion only)
+  (iv) PRIVATE only: |partial corr| = 0.1246 (>= 0.05); MAE criterion not evaluated -> not negligible (correlation criterion only)
