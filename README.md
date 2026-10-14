@@ -186,6 +186,47 @@ A hypothesis that timestamps are rounded to the minute by hand was rejected. `on
 - **One year, one city.** San Francisco is not rural Northern Sweden; this is an analogue, not a replica.
 - **CQR coverage is marginal** (not per subgroup) and assumes calibration and test rows are exchangeable. A time split only approximates this. The validation month also chose the quantile models' iteration counts, a mild reuse.
 
+## Supplementary: turnout and travel time (conditional-independence check)
+
+**Why.** Bozorgmanesh & Rydén (2025, *Int. J. Med. Inform.*, Appendix A) simulate
+EMS processes assuming travel time to scene is conditionally independent of
+preparation time given priority, time of alarm and start/end locations. Turnout
+(`response_dttm − dispatch_dttm`) is our analogue of preparation time. We do not
+observe the ambulance's start location, so we condition only on incident location,
+priority, time and the other Stage 3 features: a weaker, analogous check in
+different data, not a test of that assumption. Turnout is used only here, never as
+a prediction feature.
+
+**Design.** Jan–Sep 2025 only (test period untouched); 5-fold out-of-fold
+predictions grouped by ISO week; day-level bootstrap CIs. Turnout ≤ 0 s dropped
+(1,426 rows, all exactly 0); upper cutoffs at the 99th (222 s) and 99.9th (430.5 s)
+percentiles run as a sensitivity check. Dependence: Pearson correlation of
+out-of-fold residuals of log travel time and log turnout, each regressed on the same
+features (a double-residual / GCM-style check). Relevance: MAE change when turnout
+is added to the main model. Thresholds fixed before results: |partial correlation|
+< 0.05 and MAE gain < 2 s count as negligible.
+
+| | partial corr. (p99 cutoff) | partial corr. (p99.9 cutoff) | MAE gain (p99 / p99.9) |
+|---|---:|---:|---:|
+| overall | −0.029 [−0.036, −0.021] | −0.051 [−0.060, −0.043] | 0.54 / 0.69 s |
+| MEDIC | −0.017 | −0.040 | 0.51 / 0.65 s |
+| PRIVATE | −0.100 | −0.120 | 0.62 / 0.79 s |
+
+**Result.** Given incident location, priority and time, travel time and turnout are
+only weakly dependent: the partial correlation is −0.03 to −0.05 depending on the
+cutoff, the rank correlation is near zero (+0.001 and −0.008), and adding turnout
+improves MAE by under 1 s. The dependence is negative and clearest for private
+ambulances, which is the pattern a delayed "en route" press would create (longer
+turnout, shorter recorded travel), although these data cannot separate that
+artefact from a real effect. Median turnout is 7 s for MEDIC and 45 s for PRIVATE.
+
+**Caveats.** The conclusion is sensitive to the turnout cutoff (the overall value
+crosses the 0.05 threshold between the two cutoffs). A planned artefact check that
+excluded turnout < 15 s mostly removed MEDIC rows, so it reflects a change in unit
+mix rather than isolating the artefact. Without start locations, dependence here
+could arise through the unknown origin; the check neither supports nor refutes
+PreSim's assumption for its own setting.
+
 ## 10. Reproduce
 
 Python 3.9. On macOS, LightGBM needs OpenMP: `brew install libomp`.
@@ -219,3 +260,5 @@ done
 Code lives in [`src/`](src/); the notebooks only call it. Figures are in [`reports/figures/`](reports/figures/).
 
 Descriptive figures: notebooks/05_spatial_overview.ipynb (produced after modelling; no modelling decisions were based on them).
+
+Supplementary check: notebooks/06_turnout_independence.ipynb (reports/stage7_turnout_ci.txt).
